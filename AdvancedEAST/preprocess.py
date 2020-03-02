@@ -69,18 +69,18 @@ def reorder_vertexes(xy_list):
 
 
 def resize_image(im, max_img_size=cfg.max_train_img_size):
-    im_width = np.minimum(im.width, max_img_size)
+    im_width = np.minimum(im.width, max_img_size)#####min(475,256)=256
     if im_width == max_img_size < im.width:
-        im_height = int((im_width / im.width) * im.height)
+        im_height = int((im_width / im.width) * im.height)####256/475 * 300==161
     else:
-        im_height = im.height
-    o_height = np.minimum(im_height, max_img_size)
+        im_height = im.height#### 300
+    o_height = np.minimum(im_height, max_img_size) ####min(161,256)===161
     if o_height == max_img_size < im_height:
         o_width = int((o_height / im_height) * im_width)
     else:
-        o_width = im_width
-    d_wight = o_width - (o_width % 32)
-    d_height = o_height - (o_height % 32)
+        o_width = im_width###256
+    d_wight = o_width - (o_width % 32)####256-0=250
+    d_height = o_height - (o_height % 32)#####161-1=160
     return d_wight, d_height
 
 
@@ -116,7 +116,7 @@ def preprocess():
             # draw on the img
             draw = ImageDraw.Draw(show_gt_im)
             with open(os.path.join(origin_txt_dir,
-                                   o_img_fname[:-4] + '.txt'), 'r') as f:
+                                   o_img_fname[:-4] + '.txt'), 'r', encoding="utf-8") as f:
                 anno_list = f.readlines()
             xy_list_array = np.zeros((len(anno_list), 4, 2))
             for anno, i in zip(anno_list, range(len(anno_list))):

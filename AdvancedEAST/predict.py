@@ -1,13 +1,14 @@
 import argparse
 
+import torch
+from torchvision import transforms
+from model import EAST
+
 import numpy as np
 from PIL import Image, ImageDraw
-from keras.preprocessing import image
-from keras.applications.vgg16 import preprocess_input
 
 import cfg
-from label import point_inside_of_quad
-from network import East
+
 from preprocess import resize_image
 from nms import nms
 
@@ -17,37 +18,25 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 
-def cut_text_line(geo, scale_ratio_w, scale_ratio_h, im_array, img_path, s):
-    geo /= [scale_ratio_w, scale_ratio_h]
-    p_min = np.amin(geo, axis=0)
-    p_max = np.amax(geo, axis=0)
-    min_xy = p_min.astype(int)
-    max_xy = p_max.astype(int) + 2
-    sub_im_arr = im_array[min_xy[1]:max_xy[1], min_xy[0]:max_xy[0], :].copy()
-    for m in range(min_xy[1], max_xy[1]):
-        for n in range(min_xy[0], max_xy[0]):
-            if not point_inside_of_quad(n, m, geo, p_min, p_max):
-                sub_im_arr[m - min_xy[1], n - min_xy[0], :] = 255
-    sub_im = image.array_to_img(sub_im_arr, scale=False)
-    sub_im.save(img_path + '_subim%d.jpg' % s)
+def load_pil(img):
+    '''convert PIL Image to torch.Tensor
+    '''
+    t = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
+    return t(img).unsqueeze(0)
 
 
-def predict(east_detect, img_path, pixel_threshold, quiet=False):
-    img = image.load_img(img_path)
+def detect(img_path, model, device, pixel_threshold, quiet=True):
+    img = Image.open(img_path)
     d_wight, d_height = resize_image(img, cfg.max_predict_img_size)
     img = img.resize((d_wight, d_height), Image.NEAREST).convert('RGB')
-    img = image.img_to_array(img)
-    img = preprocess_input(img, mode='tf')
-    x = np.expand_dims(img, axis=0)
-    y = east_detect.predict(x)
-
-    y = np.squeeze(y, axis=0)
-    y[:, :, :3] = sigmoid(y[:, :, :3])
-    cond = np.greater_equal(y[:, :, 0], pixel_threshold)
+    with torch.no_grad():
+        east_detect = model(load_pil(img).to(device))
+    y = np.squeeze(east_detect.cpu().numpy(), axis=0)  # c, h, w
+    y[:3, :, :] = sigmoid(y[:3, :, :])
+    cond = np.greater_equal(y[0, :, :], pixel_threshold)
     activation_pixels = np.where(cond)
     quad_scores, quad_after_nms = nms(y, activation_pixels)
     with Image.open(img_path) as im:
-        im_array = image.img_to_array(im.convert('RGB'))
         d_wight, d_height = resize_image(im, cfg.max_predict_img_size)
         scale_ratio_w = d_wight / im.width
         scale_ratio_h = d_height / im.height
@@ -58,10 +47,10 @@ def predict(east_detect, img_path, pixel_threshold, quiet=False):
             px = (j + 0.5) * cfg.pixel_size
             py = (i + 0.5) * cfg.pixel_size
             line_width, line_color = 1, 'red'
-            if y[i, j, 1] >= cfg.side_vertex_pixel_threshold:
-                if y[i, j, 2] < cfg.trunc_threshold:
+            if y[1, i, j] >= cfg.side_vertex_pixel_threshold:
+                if y[2, i, j] < cfg.trunc_threshold:
                     line_width, line_color = 2, 'yellow'
-                elif y[i, j, 2] >= 1 - cfg.trunc_threshold:
+                elif y[2, i, j] >= 1 - cfg.trunc_threshold:
                     line_width, line_color = 2, 'green'
             draw.line([(px - 0.5 * cfg.pixel_size, py - 0.5 * cfg.pixel_size),
                        (px + 0.5 * cfg.pixel_size, py - 0.5 * cfg.pixel_size),
@@ -74,15 +63,14 @@ def predict(east_detect, img_path, pixel_threshold, quiet=False):
         txt_items = []
         for score, geo, s in zip(quad_scores, quad_after_nms,
                                  range(len(quad_scores))):
+
             if np.amin(score) > 0:
                 quad_draw.line([tuple(geo[0]),
                                 tuple(geo[1]),
                                 tuple(geo[2]),
                                 tuple(geo[3]),
                                 tuple(geo[0])], width=2, fill='red')
-                if cfg.predict_cut_text_line:
-                    cut_text_line(geo, scale_ratio_w, scale_ratio_h, im_array,
-                                  img_path, s)
+
                 rescaled_geo = geo / [scale_ratio_w, scale_ratio_h]
                 rescaled_geo_list = np.reshape(rescaled_geo, (8,)).tolist()
                 txt_item = ','.join(map(str, rescaled_geo_list))
@@ -95,41 +83,10 @@ def predict(east_detect, img_path, pixel_threshold, quiet=False):
                 f_txt.writelines(txt_items)
 
 
-def predict_txt(east_detect, img_path, txt_path, pixel_threshold, quiet=False):
-    img = image.load_img(img_path)
-    d_wight, d_height = resize_image(img, cfg.max_predict_img_size)
-    scale_ratio_w = d_wight / img.width
-    scale_ratio_h = d_height / img.height
-    img = img.resize((d_wight, d_height), Image.NEAREST).convert('RGB')
-    img = image.img_to_array(img)
-    img = preprocess_input(img, mode='tf')
-    x = np.expand_dims(img, axis=0)
-    y = east_detect.predict(x)
-
-    y = np.squeeze(y, axis=0)
-    y[:, :, :3] = sigmoid(y[:, :, :3])
-    cond = np.greater_equal(y[:, :, 0], pixel_threshold)
-    activation_pixels = np.where(cond)
-    quad_scores, quad_after_nms = nms(y, activation_pixels)
-
-    txt_items = []
-    for score, geo in zip(quad_scores, quad_after_nms):
-        if np.amin(score) > 0:
-            rescaled_geo = geo / [scale_ratio_w, scale_ratio_h]
-            rescaled_geo_list = np.reshape(rescaled_geo, (8,)).tolist()
-            txt_item = ','.join(map(str, rescaled_geo_list))
-            txt_items.append(txt_item + '\n')
-        elif not quiet:
-            print('quad invalid with vertex num less then 4.')
-    if cfg.predict_write2txt and len(txt_items) > 0:
-        with open(txt_path, 'w') as f_txt:
-            f_txt.writelines(txt_items)
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', '-p',
-                        default='demo/012.png',
+                        default=r'C:\Users\Trible\Desktop\img_test\2.jpg',
                         help='image path')
     parser.add_argument('--threshold', '-t',
                         default=cfg.pixel_threshold,
@@ -142,8 +99,11 @@ if __name__ == '__main__':
     img_path = args.path
     threshold = float(args.threshold)
     print(img_path, threshold)
+    model_path = './saved_model/MBV3_512_model_epoch_31.pth'
 
-    east = East()
-    east_detect = east.east_network()
-    east_detect.load_weights(cfg.saved_model_weights_file_path)
-    predict(east_detect, img_path, threshold)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = EAST().to(device)
+    model.load_state_dict(torch.load(model_path))
+    model.eval()
+
+    detect(img_path, model, device, threshold)

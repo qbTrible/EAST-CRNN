@@ -3,26 +3,26 @@ import numpy as np
 
 import cfg
 
-
+#  判断集合元素是否有相同元素,没有返回true, not true =false
 def should_merge(region, i, j):
     neighbor = {(i, j - 1)}
     return not region.isdisjoint(neighbor)
 
 
 def region_neighbor(region_set):
-    region_pixels = np.array(list(region_set))
-    j_min = np.amin(region_pixels, axis=0)[1] - 1
-    j_max = np.amax(region_pixels, axis=0)[1] + 1
-    i_m = np.amin(region_pixels, axis=0)[0] + 1
-    region_pixels[:, 0] += 1
+    region_pixels = np.array(list(region_set))###由{(a,b)}转换为[[a b]]
+    j_min = np.amin(region_pixels, axis=0)[1] - 1  # b列最小值-1
+    j_max = np.amax(region_pixels, axis=0)[1] + 1   # b列最大值+1
+    i_min = np.amin(region_pixels, axis=0)[0] + 1  # a列最小值+1
+    region_pixels[:, 0] += 1  # a列+1
     neighbor = {(region_pixels[n, 0], region_pixels[n, 1]) for n in
-                range(len(region_pixels))}
-    neighbor.add((i_m, j_min))
-    neighbor.add((i_m, j_max))
-    return neighbor
+                range(len(region_pixels))}  # {(a,b)}
+    neighbor.add((i_min, j_min))  # 集合追加
+    neighbor.add((i_min, j_max))
+    return neighbor  # {(a,b), (i_min, j_min), (i_min, j_max)}
 
 
-def region_group(region_list):
+def region_group(region_list):  # [{(a1, b1)}, {(a2, b2)}, ...]
     S = [i for i in range(len(region_list))]
     D = []
     while len(S) > 0:
@@ -35,18 +35,19 @@ def region_group(region_list):
     return D
 
 
-def rec_region_merge(region_list, m, S):
+def rec_region_merge(region_list, m, S):  # [{(a1, b1)}, {(a2, b2)}, ...]
     rows = [m]
     tmp = []
     for n in S:
         if not region_neighbor(region_list[m]).isdisjoint(region_list[n]) or \
                 not region_neighbor(region_list[n]).isdisjoint(region_list[m]):
             # 第m与n相交
-            tmp.append(n)
+            tmp.append(n) ####方法用于在列表末尾添加新的对象
     for d in tmp:
-        S.remove(d)
+        S.remove(d) ###指定删除list
     for e in tmp:
-        rows.extend(rec_region_merge(region_list, e, S))
+        rows.extend(rec_region_merge(region_list, e, S))####于在列表末尾一次性追加另一个序列中的多个值
+
     return rows
 
 
@@ -56,31 +57,36 @@ def nms(predict, activation_pixels, threshold=cfg.side_vertex_pixel_threshold):
         merge = False
         for k in range(len(region_list)):
             if should_merge(region_list[k], i, j):
+                # print(region_list)
                 region_list[k].add((i, j))
                 merge = True
                 # Fixme 重叠文本区域处理，存在和多个区域邻接的pixels，先都merge试试
                 # break
         if not merge:
             region_list.append({(i, j)})
+
     D = region_group(region_list)
+    # print(D)
     quad_list = np.zeros((len(D), 4, 2))
     score_list = np.zeros((len(D), 4))
     for group, g_th in zip(D, range(len(D))):
         total_score = np.zeros((4, 2))
         for row in group:
             for ij in region_list[row]:
-                score = predict[ij[0], ij[1], 1]
-                if score >= threshold:
-                    ith_score = predict[ij[0], ij[1], 2:3]
+                score = predict[1,ij[0], ij[1]]
+                if score >= threshold:  #####threshold == 0.9
+                    ith_score = predict[2:3,ij[0], ij[1]]
                     if not (cfg.trunc_threshold <= ith_score < 1 -
                             cfg.trunc_threshold):
                         ith = int(np.around(ith_score))
                         total_score[ith * 2:(ith + 1) * 2] += score
                         px = (ij[1] + 0.5) * cfg.pixel_size
                         py = (ij[0] + 0.5) * cfg.pixel_size
-                        p_v = [px, py] + np.reshape(predict[ij[0], ij[1], 3:7],
+                        p_v = [px, py] + np.reshape(predict[3:7, ij[0], ij[1]],
                                               (2, 2))
                         quad_list[g_th, ith * 2:(ith + 1) * 2] += score * p_v
         score_list[g_th] = total_score[:, 0]
         quad_list[g_th] /= (total_score + cfg.epsilon)
+    # print("score_list: ", score_list)
+    # print("quad_list: ",quad_list)
     return score_list, quad_list
