@@ -18,10 +18,12 @@ import dataset
 import models.crnn as net
 import params
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-train', '--trainroot', required=True, help='path to train dataset')
-parser.add_argument('-val', '--valroot', required=True, help='path to val dataset')
-args = parser.parse_args()
+# parser = argparse.ArgumentParser()
+# parser.add_argument('-train', '--trainroot', required=True, help='path to train dataset')
+# parser.add_argument('-val', '--valroot', required=True, help='path to val dataset')
+# args = parser.parse_args()
+train_root = r"D:\Data\dataset_for_crnn\train_lmdb_data"
+val_root = r"D:\Data\dataset_for_crnn\test_lmdb_data"
 
 if not os.path.exists(params.expr_dir):
     os.makedirs(params.expr_dir)
@@ -43,7 +45,7 @@ In this block
 """
 def data_loader():
     # train
-    train_dataset = dataset.lmdbDataset(root=args.trainroot)
+    train_dataset = dataset.lmdbDataset(root=train_root)
     assert train_dataset
     if not params.random_sample:
         sampler = dataset.randomSequentialSampler(train_dataset, params.batchSize)
@@ -54,7 +56,7 @@ def data_loader():
             collate_fn=dataset.alignCollate(imgH=params.imgH, imgW=params.imgW, keep_ratio=params.keep_ratio))
     
     # val
-    val_dataset = dataset.lmdbDataset(root=args.valroot, transform=dataset.resizeNormalize((params.imgW, params.imgH)))
+    val_dataset = dataset.lmdbDataset(root=val_root, transform=dataset.resizeNormalize((params.imgW, params.imgH)))
     assert val_dataset
     val_loader = torch.utils.data.DataLoader(val_dataset, shuffle=True, batch_size=params.batchSize, num_workers=int(params.workers))
     
@@ -90,7 +92,7 @@ def net_init():
     return crnn
 
 crnn = net_init()
-print(crnn)
+# print(crnn)
 
 # -----------------------------------------------
 """
@@ -216,8 +218,9 @@ def val(net, criterion):
                 n_correct += 1
 
     raw_preds = converter.decode(preds.data, preds_size.data, raw=True)[:params.n_val_disp]
-    for raw_pred, pred, gt in zip(raw_preds, sim_preds, cpu_texts_decode):
-        print('%-20s => %-20s, gt: %-20s' % (raw_pred, pred, gt))
+    print('%s => %s, gt: %s' % (raw_preds, sim_preds, cpu_texts_decode[0]))
+    # for raw_pred, pred, gt in zip(raw_preds, sim_preds, cpu_texts_decode):
+    #     print('%s => %s, gt: %s' % (raw_pred, pred, gt))
 
     accuracy = n_correct / float(max_iter * params.batchSize)
     print('Val loss: %f, accuray: %f' % (loss_avg.val(), accuracy))
@@ -265,4 +268,5 @@ if __name__ == "__main__":
 
             # do checkpointing
             if i % params.saveInterval == 0:
-                torch.save(crnn.state_dict(), '{0}/netCRNN_{1}_{2}.pth'.format(params.expr_dir, epoch, i))
+                # torch.save(crnn.state_dict(), '{0}/netCRNN_{1}_{2}.pth'.format(params.expr_dir, epoch, i))
+                torch.save(crnn.state_dict(), "bank_ocr.pth")

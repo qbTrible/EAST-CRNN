@@ -16,8 +16,8 @@ import argparse
 # model_path = args.model_path
 # image_path = args.image_path
 
-image_path = r"demo/demo.jpg"
-model_path = r"crnn.pth"
+image_path = r"D:\Data\dataset_for_crnn\test_img\test02.jpg"
+model_path = r"bank_ocr.pth"
 
 # net init
 nclass = len(params.alphabet) + 1
@@ -34,20 +34,24 @@ model.load_state_dict(torch.load(model_path))
 converter = utils.strLabelConverter(params.alphabet)
 
 transformer = dataset.resizeNormalize((100, 32))
-image = Image.open(image_path).convert('L')
-image = transformer(image)
-if torch.cuda.is_available():
-    image = image.cuda()
-image = image.view(1, *image.size())
-image = Variable(image)
+img = Image.open(image_path).convert('L')
+w, h = img.size
+for i in range(4):
+    image = img.crop((498*i//4, 0, 498*(i+1)//4, h))
+    image.show()
+    image = transformer(image)
+    if torch.cuda.is_available():
+        image = image.cuda()
+    image = image.view(1, *image.size())
+    image = Variable(image)
 
-model.eval()
-preds = model(image)
+    model.eval()
+    preds = model(image)
 
-_, preds = preds.max(2)
-preds = preds.transpose(1, 0).contiguous().view(-1)
+    _, preds = preds.max(2)  # values and indices
+    preds = preds.transpose(1, 0).contiguous().view(-1)
 
-preds_size = Variable(torch.LongTensor([preds.size(0)]))
-raw_pred = converter.decode(preds.data, preds_size.data, raw=True)
-sim_pred = converter.decode(preds.data, preds_size.data, raw=False)
-print('%-20s => %-20s' % (raw_pred, sim_pred))
+    preds_size = Variable(torch.LongTensor([preds.size(0)]))
+    raw_pred = converter.decode(preds.data, preds_size.data, raw=True)
+    sim_pred = converter.decode(preds.data, preds_size.data, raw=False)
+    print('%-20s => %-20s' % (raw_pred, sim_pred))

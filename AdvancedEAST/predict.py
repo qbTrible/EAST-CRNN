@@ -1,20 +1,38 @@
+import argparse
+
 import numpy as np
 from PIL import Image, ImageDraw
 from keras.preprocessing import image
 from keras.applications.vgg16 import preprocess_input
 
-from east import cfg
-from east.nms import nms
-from east.eastnet import EAST
-from east.utils import resize_image, sigmoid
+import cfg
+from label import point_inside_of_quad
+from network import East
+from preprocess import resize_image
+from nms import nms
 
 
-east = EAST()
-east_detect = east.east_network()
+def sigmoid(x):
+    """`y = 1 / (1 + exp(-x))`"""
+    return 1 / (1 + np.exp(-x))
 
 
-def predict_img(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet=False):
-    east_detect.load_weights(model_path)
+def cut_text_line(geo, scale_ratio_w, scale_ratio_h, im_array, img_path, s):
+    geo /= [scale_ratio_w, scale_ratio_h]
+    p_min = np.amin(geo, axis=0)
+    p_max = np.amax(geo, axis=0)
+    min_xy = p_min.astype(int)
+    max_xy = p_max.astype(int) + 2
+    sub_im_arr = im_array[min_xy[1]:max_xy[1], min_xy[0]:max_xy[0], :].copy()
+    for m in range(min_xy[1], max_xy[1]):
+        for n in range(min_xy[0], max_xy[0]):
+            if not point_inside_of_quad(n, m, geo, p_min, p_max):
+                sub_im_arr[m - min_xy[1], n - min_xy[0], :] = 255
+    sub_im = image.array_to_img(sub_im_arr, scale=False)
+    sub_im.save(img_path + '_subim%d.jpg' % s)
+
+
+def predict(east_detect, img_path, pixel_threshold, quiet=False):
     img = image.load_img(img_path)
     d_wight, d_height = resize_image(img, cfg.max_predict_img_size)
     img = img.resize((d_wight, d_height), Image.NEAREST).convert('RGB')
@@ -29,6 +47,7 @@ def predict_img(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet
     activation_pixels = np.where(cond)
     quad_scores, quad_after_nms = nms(y, activation_pixels)
     with Image.open(img_path) as im:
+        im_array = image.img_to_array(im.convert('RGB'))
         d_wight, d_height = resize_image(im, cfg.max_predict_img_size)
         scale_ratio_w = d_wight / im.width
         scale_ratio_h = d_height / im.height
@@ -61,6 +80,9 @@ def predict_img(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet
                                 tuple(geo[2]),
                                 tuple(geo[3]),
                                 tuple(geo[0])], width=2, fill='red')
+                if cfg.predict_cut_text_line:
+                    cut_text_line(geo, scale_ratio_w, scale_ratio_h, im_array,
+                                  img_path, s)
                 rescaled_geo = geo / [scale_ratio_w, scale_ratio_h]
                 rescaled_geo_list = np.reshape(rescaled_geo, (8,)).tolist()
                 txt_item = ','.join(map(str, rescaled_geo_list))
@@ -68,13 +90,12 @@ def predict_img(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet
             elif not quiet:
                 print('quad invalid with vertex num less then 4.')
         quad_im.save(img_path + '_predict.jpg')
-        if len(txt_items) > 0:
+        if cfg.predict_write2txt and len(txt_items) > 0:
             with open(img_path[:-4] + '.txt', 'w') as f_txt:
                 f_txt.writelines(txt_items)
 
 
-def predict_txt(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet=False):
-    east_detect.load_weights(model_path)
+def predict_txt(east_detect, img_path, txt_path, pixel_threshold, quiet=False):
     img = image.load_img(img_path)
     d_wight, d_height = resize_image(img, cfg.max_predict_img_size)
     scale_ratio_w = d_wight / img.width
@@ -96,11 +117,33 @@ def predict_txt(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet
         if np.amin(score) > 0:
             rescaled_geo = geo / [scale_ratio_w, scale_ratio_h]
             rescaled_geo_list = np.reshape(rescaled_geo, (8,)).tolist()
-            txt_items.append(rescaled_geo_list)
+            txt_item = ','.join(map(str, rescaled_geo_list))
+            txt_items.append(txt_item + '\n')
         elif not quiet:
             print('quad invalid with vertex num less then 4.')
-    return txt_items
+    if cfg.predict_write2txt and len(txt_items) > 0:
+        with open(txt_path, 'w') as f_txt:
+            f_txt.writelines(txt_items)
 
-img_path = r"D:\Download\cmb2017\others\6.png"
-model_path = r"D:\Data\EAST-model\east_model_weights.h5"
-predict_img(img_path, model_path, pixel_threshold=cfg.pixel_threshold, quiet=False)
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path', '-p',
+                        default='demo/012.png',
+                        help='image path')
+    parser.add_argument('--threshold', '-t',
+                        default=cfg.pixel_threshold,
+                        help='pixel activation threshold')
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    img_path = args.path
+    threshold = float(args.threshold)
+    print(img_path, threshold)
+
+    east = East()
+    east_detect = east.east_network()
+    east_detect.load_weights(cfg.saved_model_weights_file_path)
+    predict(east_detect, img_path, threshold)

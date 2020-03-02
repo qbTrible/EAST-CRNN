@@ -7,7 +7,8 @@ class BidirectionalLSTM(nn.Module):
 
     def __init__(self, nIn, nHidden, nOut):
         super(BidirectionalLSTM, self).__init__()
-
+        # input(seq_len, batch, input_size), output(seq_len, batch, hidden_size * num_directions)
+        # c0 = h0(num_layers * num_directions, batch, hidden_size)
         self.rnn = nn.LSTM(nIn, nHidden, bidirectional=True)
         self.embedding = nn.Linear(nHidden * 2, nOut)
 
@@ -29,10 +30,10 @@ class CRNN(nn.Module):
         super(CRNN, self).__init__()
         assert imgH % 16 == 0, 'imgH has to be a multiple of 16'
 
-        ks = [3, 3, 3, 3, 3, 3, 2]
-        ps = [1, 1, 1, 1, 1, 1, 0]
-        ss = [1, 1, 1, 1, 1, 1, 1]
-        nm = [64, 128, 256, 256, 512, 512, 512]
+        ks = [3, 3, 3, 3, 3, 3, 2]  # kernel size
+        ps = [1, 1, 1, 1, 1, 1, 0]  # padding size
+        ss = [1, 1, 1, 1, 1, 1, 1]  # stride
+        nm = [64, 128, 256, 256, 512, 512, 512]  # CNN通道数
 
         cnn = nn.Sequential()
 
@@ -78,7 +79,7 @@ class CRNN(nn.Module):
         conv = conv.permute(2, 0, 1)  # [w, b, c]
 
         # rnn features
-        output = self.rnn(conv)
+        output = self.rnn(conv)  # [w, b, nclass]
         
         # add log_softmax to converge output
         output = F.log_softmax(output, dim=2)
@@ -99,7 +100,7 @@ if __name__ == "__main__":
     x = torchvision.transforms.ToTensor()(img).unsqueeze(0).cuda()
     print(x.shape)
     # x = torch.randn((2, 3, 32, 256)).cuda()
-    model = CRNN(32, 3, 11, 64, 2).cuda()
+    model = CRNN(32, 3, 16, 64, 2).cuda()
     out = model(x)
-    print(out.shape)
+    print(out.shape)  # [w, b, nclass]
 
